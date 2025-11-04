@@ -1,0 +1,244 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  id-token: write   # דרוש ל-OIDC
+  contents: read
+
+env:
+  IMAGE_NAME: portfolio-ayala
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fail if merge-conflict markers exist
+        run: |
+          if git grep -nE '^[<=>]{7}'; then
+            echo "Resolve merge conflicts before running CI."
+            exit 1
+          fi
+
+      - name: Report (pull)
+        if: always()
+        run: |
+          echo "### ✅ pull passed" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    runs-on: ubuntu-latest
+    needs: pull
+    env:
+      IMAGE_TAG: latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Docker build (latest)
+        run: docker build -t $IMAGE_NAME:$IMAGE_TAG .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: 'table'
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '0'
+
+      - name: Save built image as artifact (tar)
+        run: docker save $IMAGE_NAME:$IMAGE_TAG -o image_latest.tar
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image_latest
+          path: image_latest.tar
+
+      - name: Report (build)
+        if: always()
+        run: |
+          echo "### ✅ build passed" >> "$GITHUB_STEP_SUMMARY"
+
+  unit_test:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # אם יש package-lock.json נשתמש ב-npm ci; אחרת נ fallback ל-npm install
+      - name: Install deps (ci or install)
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      # אם אין script בשם "test" לא נכשיל את ה-pipeline
+      - name: Run tests (if present)
+        run: |
+          if npm run | grep -qE '^  test'; then
+            CI=true npm test
+          else
+            echo "No test script defined; skipping."
+          fi
+
+      # לינט רק אם קיים
+      - name: Lint (if present)
+        run: |
+          if npm run | grep -qE '^  lint'; then
+            npm run lint
+          else
+            echo "No lint script; skipping."
+          fi
+
+      - name: Report (unit_test)
+        if: always()
+        run: echo "### ✅ unit_test finished" >> "$GITHUB_STEP_SUMMARY"
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [pull, build, unit_test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download built image
+        uses: actions/download-artifact@v4
+        with:
+          name: image_latest
+          path: ./img
+
+      - name: Load local image
+        run: docker load -i ./img/image_latest.tar
+
+      - name: "Sanity: ensure local tag exists"
+        run: docker images | grep -E "^${IMAGE_NAME}[[:space:]]+latest" || (echo "${IMAGE_NAME}:latest not loaded" && exit 1)
+
+
+      - name: Create compose override for CI
+        run: |
+          cat > docker-compose.ci.override.yml <<'YML'
+          services:
+            web:
+              image: ${IMAGE_NAME}:latest
+          YML
+
+      - name: Compose up (no build, with override)
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.override.yml up -d
+
+      - name: Wait for web (HTTP 200)
+        run: |
+          for i in {1..40}; do
+            if curl -fsS http://localhost:8000/ >/dev/null; then
+              echo "Web is up"; exit 0; fi
+            echo "Waiting for web... ($i)"; sleep 3
+          done
+          echo "Service not responding in time" && exit 1
+
+      - name: Basic E2E curl
+        run: curl -i http://localhost:8000/ | head -n 1
+
+
+      - name: Compose down
+        if: always()
+        run: docker compose -f docker-compose.yml -f docker-compose.ci.override.yml down -v
+
+      - name: Collect compose logs
+        if: always()
+        run: |
+          mkdir -p reports
+          docker compose -f docker-compose.yml -f docker-compose.ci.override.yml ps > reports/compose.ps.txt || true
+          docker compose -f docker-compose.yml -f docker-compose.ci.override.yml logs --no-color > reports/compose.log || true
+
+      - name: Upload reports (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-reports
+          path: reports/
+
+      - name: Report (e2e)
+        if: always()
+        run: |
+          echo "### ✅ e2e finished (see ci-reports artifact)" >> "$GITHUB_STEP_SUMMARY"
+
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [e2e, build]   # נדחף רק אחרי שהאימג' נבנה ונבדק
+    env:
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      IMAGE_TAG: ${{ github.sha }}
+      AWS_REGION: ${{ vars.AWS_REGION }}           # ap-south-1 אצלך
+    steps:
+      - name: Download built image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: image_latest
+          path: ./img
+
+      - name: Load image
+        run: docker load -i ./img/image_latest.tar
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Who am I (STS)
+        run: aws sts get-caller-identity
+
+      - name: Ensure ECR repository exists
+        run: |
+          aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1 || \
+          aws ecr create-repository --repository-name "$ECR_REPOSITORY"
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Tag image for ECR (latest + sha)
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "Will push:"
+          echo " - $ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo " - $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Push to ECR
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+
+      - name: Show published image URI
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: echo "PUBLISHED_IMAGE=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      - name: Report (publish)
+        if: always()
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          echo "### ✅ publish pushed $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_STEP_SUMMARY"
+

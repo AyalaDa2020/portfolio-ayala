@@ -6,7 +6,7 @@ services:
     volumes:
       - mongo-data:/data/db
 
-  app:
+  web:
     build: .
     container_name: ads-app
     environment:
