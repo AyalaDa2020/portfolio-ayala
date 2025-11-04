@@ -1,0 +1,19 @@
+services:
+  mongo:
+    image: mongo:6
+    container_name: ads-mongo
+    ports: ["27017:27017"]
+    volumes:
+      - mongo-data:/data/db
+
+  app:
+    build: .
+    container_name: ads-app
+    environment:
+      - MONGO_URI=mongodb://mongo:27017/adsdb
+      - PORT=8000
+    depends_on: [mongo]
+    ports: ["8000:8000"]
+
+volumes:
+  mongo-data:

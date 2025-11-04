@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ניהול חבילות פרסום</title>
+  <style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 24px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+    th, td { border: 1px solid #ddd; padding: 8px; }
+    th { background: #f2f2f2; }
+    form { display: grid; gap: 8px; max-width: 520px; margin-top: 24px; }
+    input, select, button { padding: 8px; font-size: 14px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .error { color: #b00020; }
+    .ok { color: #056e20; }
+  </style>
+</head>
+<body>
+  <h1>ניהול חבילות פרסום</h1>
+
+  <h3>לקוחות קיימים</h3>
+  <div id="msg"></div>
+  <table>
+    <thead>
+      <tr>
+        <th>לקוח</th>
+        <th>מייל</th>
+        <th>סוג חבילה</th>
+        <th>כמות פרסומים</th>
+        <th>תאריך פתיחה</th>
+        <th>תאריך סיום</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+
+  <h3 style="margin-top:24px;">הוסף חדש</h3>
+  <form id="addForm">
+    <div class="row">
+      <input id="name" placeholder="שם לקוח" required />
+      <input id="email" type="email" placeholder="מייל" required />
+    </div>
+    <div class="row">
+      <input id="package_type" placeholder="סוג חבילה (למשל: Basic/Pro)" required />
+      <input id="quota" type="number" min="1" step="1" placeholder="כמות פרסומים" required />
+    </div>
+    <div class="row">
+      <input id="start_date" type="date" placeholder="תאריך פתיחה" required />
+      <input id="end_date" type="date" placeholder="תאריך סיום (אופציונלי)" />
+    </div>
+    <button type="submit">הוסף חדש</button>
+    <div id="formMsg"></div>
+  </form>
+
+<script>
+  const tbody = document.getElementById('tbody');
+  const msg = document.getElementById('msg');
+  const formMsg = document.getElementById('formMsg');
+
+  async function loadClients() {
+    msg.textContent = 'טוען...';
+    try {
+      const res = await fetch('/api/clients');
+      const data = await res.json();
+      tbody.innerHTML = data.map(d => `
+        <tr>
+          <td>${escapeHtml(d.name)}</td>
+          <td>${escapeHtml(d.email)}</td>
+          <td>${escapeHtml(d.package_type)}</td>
+          <td>${d.quota}</td>
+          <td>${escapeHtml(d.start_date || '')}</td>
+          <td>${escapeHtml(d.end_date || '')}</td>
+        </tr>
+      `).join('');
+      msg.textContent = `נמצא ${data.length} לקוחות`;
+      msg.className = 'ok';
+    } catch (e) {
+      msg.textContent = 'שגיאה בטעינה';
+      msg.className = 'error';
+      console.error(e);
+    }
+  }
+
+  document.getElementById('addForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    formMsg.textContent = '';
+    const payload = {
+      name: document.getElementById('name').value,
+      email: document.getElementById('email').value,
+      package_type: document.getElementById('package_type').value,
+      quota: Number(document.getElementById('quota').value),
+      start_date: document.getElementById('start_date').value,
+      end_date: document.getElementById('end_date').value || null
+    };
+
+    try {
+      const res = await fetch('/api/clients', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const e = await res.json();
+        formMsg.textContent = e.error || 'שגיאה בהוספה';
+        formMsg.className = 'error';
+        return;
+      }
+
+      ev.target.reset();
+      formMsg.textContent = 'נוסף בהצלחה';
+      formMsg.className = 'ok';
+      loadClients();
+    } catch (e) {
+      formMsg.textContent = 'שגיאה בשליחה';
+      formMsg.className = 'error';
+      console.error(e);
+    }
+  });
+
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  }
+
+  loadClients();
+</script>
+</body>
+</html>
