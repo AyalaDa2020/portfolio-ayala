@@ -223,7 +223,7 @@ jobs:
           echo " - $ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo " - $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
-      - name: Push to ECR
+      - name: Push to ECR 
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         run: |
