@@ -1,0 +1,53 @@
+name: CD
+
+on:
+  push:
+    branches: [ main ]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  EKS_CLUSTER: portfolio-ayala-eks
+  NAMESPACE: default
+  DEPLOYMENT: portfolio-api
+  CONTAINER: portfolio-api
+  ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_IAM_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Resolve AWS account ID
+        id: acct
+        run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_OUTPUT"
+
+      - name: Build image URI (by commit SHA)
+        id: img
+        run: |
+          echo "uri=${{ steps.acct.outputs.id }}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Update kubeconfig
+        run: aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_CLUSTER"
+
+      - name: Rollout new image
+        run: |
+          kubectl set image deployment/$DEPLOYMENT \
+            $CONTAINER=${{ steps.img.outputs.uri }} -n $NAMESPACE
+          kubectl rollout status deployment/$DEPLOYMENT -n $NAMESPACE --timeout=180s
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "### 🚀 Deployed image" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.img.outputs.uri }}" >> "$GITHUB_STEP_SUMMARY"
