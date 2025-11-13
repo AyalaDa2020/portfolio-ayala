@@ -141,7 +141,7 @@ jobs:
       - name: Compose up (no build, with override)
         run: docker compose -f docker-compose.yml -f docker-compose.ci.override.yml up -d
 
-      - name: Wait for web (HTTP 200) 
+      - name: Wait for web (HTTP 200)
         run: |
           for i in {1..40}; do
             if curl -fsS http://localhost:8000/ >/dev/null; then
