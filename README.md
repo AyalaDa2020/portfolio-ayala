@@ -1,88 +1,129 @@
-Portfolio-ayala
+# Portfolio Ayala – Full DevOps Project  
+Full-stack application with a complete CI/CD pipeline deployed on AWS EKS using Terraform + Kubernetes.
 
-Full-stack Node.js application packaged with Docker and deployed automatically to AWS EKS using a CI/CD pipeline.
+This repository contains:
+- The Node.js application (Express + MongoDB)
+- Docker configuration
+- GitHub Actions CI & CD pipelines
+- Full Kubernetes manifests
+- Architecture diagram and deployment screenshots
 
-This repository contains the application code, Dockerfile, docker-compose, and the CI/CD workflows.
+---
 
-📌 Architecture (Diagram)
+# 📌 System Architecture
 
+![System Architecture](./assets/system-architecture.png)
 
-![Architecture](./assets/architecture.png)
+This diagram shows the entire flow:
+- Developer pushes to GitHub  
+- CI pipeline builds, tests, scans and publishes Docker images  
+- CD pipeline deploys to EKS  
+- AWS infrastructure: VPC, ECR, EKS, Load Balancer  
+- Users access the application via ELB
 
-🚀 CI/CD Overview
-✔ CI Pipeline
+---
 
-Triggered on every push to main:
+# 🚀 CI Pipeline (GitHub Actions)
 
-Pull
+The CI workflow runs automatically on every push to `main`.
 
-Build Docker image
+It performs:
+1. **Pull**  
+2. **Build** Docker image  
+3. **Unit Test**  
+4. **e2e Test** using docker-compose  
+5. **Publish** image to Amazon ECR (latest + SHA tag)
 
-Unit tests
+### CI Screenshot  
+![CI](./assets/ci.png)
 
-e2e tests (Docker Compose)
+---
 
-Publish image → AWS ECR
+# 🚀 CD Pipeline (GitHub Actions)
 
-CI Screenshot:
+The CD workflow runs **automatically after CI succeeds**.
 
-![CI](./assets/CI.png)
+Steps:
+1. GitHub assumes IAM Role using **OIDC**  
+2. Builds the ECR image URI using commit SHA  
+3. Updates kubeconfig for EKS  
+4. Deploys the new version using:  
+kubectl set image ...
+kubectl rollout status ...
 
-✔ CD Pipeline
+yaml
+Copy code
 
-Runs automatically after CI succeeds:
+### CD Screenshot  
+![CD](./assets/cd.png)
 
-GitHub Actions assumes AWS IAM Role (OIDC)
+---
 
-Generates image URI (using commit SHA)
+# 🧱 AWS Infrastructure (Terraform)
 
-Updates EKS Deployment
+Infrastructure is created in a separate repo (`portfolio-ayala-infra`), but relevant screenshots are included below.
 
-Waits for rollout success
+### EKS Cluster  
+![EKS Cluster](./assets/eks-cluster.png)
 
-CD Screenshot:
+### Node Group  
+![Node Group](./assets/node-group.png)
 
-![CD](./assets/CD.png)
+### ECR Repository  
+![ECR](./assets/ecr.png)
 
-🧱 Tech Stack
+---
 
-Node.js / Express
+# ☸ Kubernetes Deployment
 
-Docker & Docker Compose
+The Kubernetes manifests (in `portfolio-ayala-cluster`) deploy:
 
-GitHub Actions
+- **API Deployment**  
+- **Service (LoadBalancer)**  
+- **MongoDB StatefulSet**
 
-AWS ECR
+### kubectl get all  
+![kubectl get all](./assets/kubectl-get-all.png)
 
-AWS EKS
+### portfolio-api Service (LoadBalancer)  
+![kubectl get svc 1](./assets/kubectl-get-svc-1.png)  
+![kubectl get svc 2](./assets/kubectl-get-svc-2.png)
 
-IAM OIDC (no static AWS keys)
+### AWS Load Balancer  
+![Load Balancer](./assets/load-balancer.png)
 
-🐳 Run Locally
-npm install
-npm start
+---
 
+# 🌍 Application Running in Production
 
-or with Docker:
+Here is the application live through the AWS Load Balancer:
 
-docker build -t portfolio-ayala .
-docker run -p 8000:8000 portfolio-ayala
+![App Running](./assets/app-running.png)
 
-🌐 Main API Example
+---
 
-GET /api/clients – returns all clients
-POST /api/clients – creates a new client
+# 🧪 Run Locally
 
-📂 Repository Structure
-/src            → app logic
-/static         → frontend files
-Dockerfile
-docker-compose.yml
-.github/workflows/ci.yml
-.github/workflows/cd.yml
+### ▶️ Run with Node.js
 
-✨ Author
+`npm install`
+`npm run dev`
 
-Ayala Darshan
-DevOps & Full-Stack Developer
+### ▶️ Run with Docker
+
+`docker compose up`
+
+### 📦 Deployment Flow Summary
+
+1. Developer pushes new code
+2. CI pipeline builds, tests, and publishes Docker images
+3. Image is uploaded to Amazon ECR
+4. CD workflow deploys the new version to EKS
+5. Load Balancer exposes the updated application
+6. Users access the app through the ELB DNS name
+
+### 👩‍💻 Author
+### Ayala Darshan
+Full-Stack & DevOps Developer
+
 GitHub: https://github.com/AyalaDa2020
